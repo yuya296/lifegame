@@ -1,3 +1,4 @@
+import './styles.css';
 import { Sim } from './sim.js';
 import { Renderer } from './renderer.js';
 import { Loop } from './loop.js';
