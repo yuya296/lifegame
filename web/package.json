@@ -1,0 +1,21 @@
+{
+  "name": "lifegame-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build:wasm": "wasm-pack build ../crates/lifegame-wasm --target web --out-dir ../../web/src/wasm --dev",
+    "build:wasm:release": "wasm-pack build ../crates/lifegame-wasm --target web --out-dir ../../web/src/wasm --release",
+    "predev": "npm run build:wasm",
+    "prebuild": "npm run build:wasm:release",
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "vite": "^5",
+    "vite-plugin-top-level-await": "^1",
+    "vite-plugin-wasm": "^3"
+  }
+}

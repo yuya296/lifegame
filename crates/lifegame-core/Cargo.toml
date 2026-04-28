@@ -1,0 +1,9 @@
+[package]
+name = "lifegame-core"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror = "1"
+rand = { version = "0.8", default-features = false, features = ["std", "std_rng", "small_rng"] }

@@ -1,0 +1,11 @@
+/target
+/crates/lifegame-wasm/pkg
+/web/node_modules
+/web/dist
+/web/src/wasm
+/web/tsconfig.tsbuildinfo
+.playwright-cli
+.playwright-browsers
+playwright-profile
+.DS_Store
+*.log
