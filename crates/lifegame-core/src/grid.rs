@@ -1,4 +1,12 @@
 //! Grid type and cell-level operations.
+//!
+//! Cells are stored bit-packed: 64 cells per `u64` word, with cell `(x, y)`
+//! at bit `x & 63` of word `y * stride_words + (x >> 6)`. The lowest bit of
+//! a word holds the leftmost cell (x=0 of that word).
+//!
+//! `width` does not need to be a multiple of 64. The unused high bits in the
+//! last word of each row are *invariant zero* — every operation must preserve
+//! that, otherwise neighbour counting at the right edge would read garbage.
 
 use crate::error::CoreError;
 use crate::patterns::Pattern;
@@ -21,7 +29,8 @@ pub enum Boundary {
 pub struct Grid {
     width: u32,
     height: u32,
-    cells: Vec<u8>,
+    stride_words: usize, // ceil(width / 64), in u64 units
+    cells: Vec<u64>,     // length = stride_words * height
 }
 
 impl Grid {
@@ -29,22 +38,18 @@ impl Grid {
         if width == 0 || height == 0 {
             return Err(CoreError::InvalidDimensions { width, height });
         }
-        // Guard against dimensions that don't fit in i32: many internal
-        // operations use signed arithmetic (e.g. neighbour offsets) and casting
-        // a value larger than `i32::MAX` would silently wrap.
         if width > i32::MAX as u32 || height > i32::MAX as u32 {
             return Err(CoreError::InvalidDimensions { width, height });
         }
-        // Guard against `usize` multiplication overflow: on 32-bit / wasm32
-        // targets `usize` is 32 bits wide, so `width * height` may overflow
-        // even when each factor passes the `i32::MAX` check above.
-        let len = (width as usize)
+        let stride_words = ((width as usize) + 63) / 64;
+        let len = stride_words
             .checked_mul(height as usize)
             .ok_or(CoreError::InvalidDimensions { width, height })?;
         Ok(Self {
             width,
             height,
-            cells: vec![0u8; len],
+            stride_words,
+            cells: vec![0u64; len],
         })
     }
 
@@ -56,12 +61,44 @@ impl Grid {
         self.height
     }
 
-    pub fn cells(&self) -> &[u8] {
+    /// Words per row in the underlying `u64` storage.
+    pub fn stride_words(&self) -> usize {
+        self.stride_words
+    }
+
+    /// Bytes per row in the underlying storage (always a multiple of 8).
+    pub fn stride_bytes(&self) -> usize {
+        self.stride_words * 8
+    }
+
+    /// Underlying `u64` words. Bit layout: cell `(x, y)` lives at
+    /// `bits()[y * stride_words() + (x >> 6)]` bit `x & 63`.
+    pub fn bits(&self) -> &[u64] {
         &self.cells
     }
 
-    pub fn cells_mut(&mut self) -> &mut [u8] {
+    /// Mutable view of the underlying `u64` words. Callers writing to this
+    /// slice MUST keep the high (out-of-row) bits zero in the last word of
+    /// each row.
+    pub fn bits_mut(&mut self) -> &mut [u64] {
         &mut self.cells
+    }
+
+    /// Byte view of the bit-packed cells. Layout is little-endian within
+    /// each `u64` word (LSB of byte 0 is cell x=0). Provided for FFI / wasm
+    /// consumers; pure-Rust callers should prefer `bits()`.
+    pub fn cells(&self) -> &[u8] {
+        bytemuck::cast_slice(&self.cells)
+    }
+
+    /// Bit-level mask helper.
+    #[inline]
+    fn word_index(&self, x: u32, y: u32) -> (usize, u64) {
+        let xi = x as usize;
+        let yi = y as usize;
+        let widx = yi * self.stride_words + (xi >> 6);
+        let mask = 1u64 << (xi & 63);
+        (widx, mask)
     }
 
     pub fn get(&self, x: i32, y: i32, boundary: Boundary) -> Cell {
@@ -80,37 +117,41 @@ impl Grid {
                 (x as u32, y as u32)
             }
         };
-        let idx = (yi * self.width + xi) as usize;
-        if self.cells[idx] == 0 {
-            Cell::Dead
-        } else {
+        let (widx, mask) = self.word_index(xi, yi);
+        if (self.cells[widx] & mask) != 0 {
             Cell::Alive
+        } else {
+            Cell::Dead
         }
     }
 
     pub fn set(&mut self, x: i32, y: i32, cell: Cell) {
-        let w = self.width as i32;
-        let h = self.height as i32;
-        if x < 0 || x >= w || y < 0 || y >= h {
+        if !self.in_bounds(x, y) {
             return;
         }
-        let idx = ((y as u32) * self.width + (x as u32)) as usize;
-        self.cells[idx] = cell as u8;
+        let (widx, mask) = self.word_index(x as u32, y as u32);
+        match cell {
+            Cell::Alive => self.cells[widx] |= mask,
+            Cell::Dead => self.cells[widx] &= !mask,
+        }
     }
 
     pub fn toggle(&mut self, x: i32, y: i32) {
-        let w = self.width as i32;
-        let h = self.height as i32;
-        if x < 0 || x >= w || y < 0 || y >= h {
+        if !self.in_bounds(x, y) {
             return;
         }
-        let idx = ((y as u32) * self.width + (x as u32)) as usize;
-        self.cells[idx] = if self.cells[idx] == 0 { 1 } else { 0 };
+        let (widx, mask) = self.word_index(x as u32, y as u32);
+        self.cells[widx] ^= mask;
+    }
+
+    #[inline]
+    fn in_bounds(&self, x: i32, y: i32) -> bool {
+        x >= 0 && y >= 0 && (x as u32) < self.width && (y as u32) < self.height
     }
 
     pub fn clear(&mut self) {
-        for c in self.cells.iter_mut() {
-            *c = 0;
+        for w in self.cells.iter_mut() {
+            *w = 0;
         }
     }
 
@@ -122,15 +163,40 @@ impl Grid {
         if !(0.0..=1.0).contains(&density) || density.is_nan() {
             return Err(CoreError::InvalidDensity(density));
         }
-        for c in self.cells.iter_mut() {
-            let r: f32 = rng.gen();
-            *c = if r < density { 1 } else { 0 };
+        // Per-cell Bernoulli draws keep the existing semantics (and golden
+        // hash) deterministic for a given seed: the RNG sequence is the
+        // same as before, just packed into bits afterwards.
+        let stride = self.stride_words;
+        let w = self.width as usize;
+        for y in 0..self.height as usize {
+            let row_base = y * stride;
+            // Walk each whole word, plus the partial trailing word if
+            // width is not a multiple of 64.
+            for word_idx in 0..stride {
+                let bit_start = word_idx * 64;
+                let bits_in_word = (w - bit_start).min(64);
+                let mut word: u64 = 0;
+                for b in 0..bits_in_word {
+                    let r: f32 = rng.gen();
+                    if r < density {
+                        word |= 1u64 << b;
+                    }
+                }
+                self.cells[row_base + word_idx] = word;
+            }
         }
         Ok(())
     }
 
     pub fn count_alive(&self) -> u32 {
-        self.cells.iter().map(|&c| c as u32).sum()
+        // High bits of the trailing word in each row are kept at zero by
+        // every mutator, so a flat popcount over the whole storage gives
+        // the live cell total directly.
+        let mut total: u32 = 0;
+        for w in &self.cells {
+            total += w.count_ones();
+        }
+        total
     }
 
     pub fn place_pattern(
@@ -149,15 +215,11 @@ impl Grid {
             gw: self.width,
             gh: self.height,
         };
-        // `pattern.width`/`height` are `u32`; cast to `i32` only after bounding
-        // them by `i32::MAX` so we never depend on a wrapping cast.
         if pattern.width > i32::MAX as u32 || pattern.height > i32::MAX as u32 {
             return Err(oob());
         }
         let pw = pattern.width as i32;
         let ph = pattern.height as i32;
-        // For Fixed: must fit entirely. Use checked arithmetic so extreme
-        // offsets cannot overflow `i32` (panic in debug, wrap in release).
         if boundary == Boundary::Fixed {
             if ox < 0 || oy < 0 {
                 return Err(oob());
@@ -174,22 +236,16 @@ impl Grid {
                 if v == 0 {
                     continue;
                 }
-                // `px`/`py` are bounded by `pattern.width`/`height` which we've
-                // already verified fit in `i32`, so `as i32` is safe here.
                 let gx = ox.checked_add(px as i32).ok_or_else(oob)?;
                 let gy = oy.checked_add(py as i32).ok_or_else(oob)?;
-                match boundary {
+                let (xi, yi) = match boundary {
                     Boundary::Toroidal => {
-                        let xi = gx.rem_euclid(w) as u32;
-                        let yi = gy.rem_euclid(h) as u32;
-                        let idx = (yi * self.width + xi) as usize;
-                        self.cells[idx] = 1;
+                        (gx.rem_euclid(w) as u32, gy.rem_euclid(h) as u32)
                     }
-                    Boundary::Fixed => {
-                        let idx = ((gy as u32) * self.width + (gx as u32)) as usize;
-                        self.cells[idx] = 1;
-                    }
-                }
+                    Boundary::Fixed => (gx as u32, gy as u32),
+                };
+                let (widx, mask) = self.word_index(xi, yi);
+                self.cells[widx] |= mask;
             }
         }
         Ok(())

@@ -14,7 +14,7 @@ use crate::rules::next_generation;
 struct Snapshot {
     width: u32,
     height: u32,
-    cells: Vec<u8>,
+    cells: Vec<u64>,
     generation: u64,
 }
 
@@ -68,6 +68,10 @@ impl Simulation {
         self.front.cells()
     }
 
+    pub fn bits(&self) -> &[u64] {
+        self.front.bits()
+    }
+
     pub fn count_alive(&self) -> u32 {
         self.front.count_alive()
     }
@@ -89,7 +93,7 @@ impl Simulation {
             self.front = Grid::new(snap.width, snap.height).expect("snapshot dims must be valid");
             self.back = Grid::new(snap.width, snap.height).expect("snapshot dims must be valid");
         }
-        self.front.cells_mut().copy_from_slice(&snap.cells);
+        self.front.bits_mut().copy_from_slice(&snap.cells);
         self.generation = snap.generation;
         true
     }
@@ -147,12 +151,13 @@ impl Simulation {
         let new_back = Grid::new(width, height)?;
         let copy_w = self.front.width().min(width);
         let copy_h = self.front.height().min(height);
-        let old_w = self.front.width();
-        let old_cells = self.front.cells();
+        // Bit-by-bit copy via Grid::get/set rather than reaching into the
+        // raw word storage: trivially correct under the new packed layout
+        // and only used on user resize, not in the hot path.
         for y in 0..copy_h {
             for x in 0..copy_w {
-                let v = old_cells[(y * old_w + x) as usize];
-                new_front.cells_mut()[(y * width + x) as usize] = v;
+                let cell = self.front.get(x as i32, y as i32, Boundary::Fixed);
+                new_front.set(x as i32, y as i32, cell);
             }
         }
         // Success is now certain — commit history then swap in the new grids.
@@ -202,7 +207,7 @@ impl Simulation {
         let snap = Snapshot {
             width: self.front.width(),
             height: self.front.height(),
-            cells: self.front.cells().to_vec(),
+            cells: self.front.bits().to_vec(),
             generation: self.generation,
         };
         self.history.push_back(snap);
