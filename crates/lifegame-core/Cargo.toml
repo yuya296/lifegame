@@ -10,3 +10,8 @@ rand = { version = "0.8", default-features = false, features = ["std", "std_rng"
 
 [dev-dependencies]
 sha2 = "0.10"
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "next_generation"
+harness = false
