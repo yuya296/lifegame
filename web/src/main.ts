@@ -40,7 +40,7 @@ async function main(): Promise<void> {
   const loop = new Loop(
     () => sim.step(),
     () => {
-      renderer.draw(sim.cellsView(), sim.width(), sim.height(), state.preview);
+      renderer.draw(sim.cellsView(), sim.width(), sim.height(), sim.strideBytes(), state.preview);
       updateStatus();
     }
   );

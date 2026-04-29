@@ -551,7 +551,7 @@ fn rotate_step_commutes_under_toroidal() {
     sim.place_pattern(builtin("glider").unwrap(), 1, 1).unwrap();
     sim.place_pattern(builtin("blinker").unwrap(), 7, 8).unwrap();
     let mut g = Grid::new(11, 11).unwrap();
-    g.cells_mut().copy_from_slice(sim.cells());
+    g.bits_mut().copy_from_slice(sim.bits());
 
     // Path 1: rotate then step.
     let rotated = rotate_cw(&g);
@@ -625,14 +625,17 @@ fn deterministic_seeded_snapshot_hashes() {
         sim.step();
     }
     let h_after = hex_hash(sim.cells());
+    // Hashes pinned against the bit-packed cell layout (Vec<u64> as bytes,
+    // little-endian within each word). Regenerate this pair in lockstep if
+    // the storage layout intentionally changes.
     assert_eq!(
         h_initial,
-        "b702c430ddfd2d73f3225474bebb7bafa47ffa5932e55b319ab01269bb7601cf",
-        "seeded initial hash drift (regenerate intentionally if rule changed)"
+        "f354b3f7a3eb4b7f5daaab520405a1912eb4a77a615fedeeed98bcdc31d1a8a5",
+        "seeded initial hash drift (regenerate intentionally if layout changed)"
     );
     assert_eq!(
         h_after,
-        "f146d2ca6e810103cf4119d57f63282bccd5f83484d27218a2340b6bf3570276",
+        "61707ce2e15d054b5aacd89f4fc82ca41f5b71b0a4b27bd6b024d90b6a298081",
         "seeded post-100-step hash drift"
     );
 }

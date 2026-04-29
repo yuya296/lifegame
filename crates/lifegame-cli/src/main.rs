@@ -240,16 +240,18 @@ fn render_frame<W: Write>(sim: &Simulation, cli: &Cli, out: &mut W) -> io::Resul
 fn render_board<W: Write>(sim: &Simulation, out: &mut W) -> io::Result<()> {
     let w = sim.width() as usize;
     let h = sim.height() as usize;
-    let cells = sim.cells();
-    // Build each row as a String first to avoid repeatedly handing two
-    // separate `write!` calls per cell to the formatter — this keeps wall
-    // time per frame low even for big grids.
+    // Bit-packed layout: cell (x, y) is bit `x & 63` of word
+    // `bits[y * stride + (x >> 6)]`.
+    let bits = sim.bits();
+    let stride = (w + 63) / 64;
     let mut line = String::with_capacity(w * 3);
     for y in 0..h {
         line.clear();
-        let row = &cells[y * w..(y + 1) * w];
-        for &c in row {
-            line.push(if c != 0 { '█' } else { '·' });
+        let row_base = y * stride;
+        for x in 0..w {
+            let word = bits[row_base + (x >> 6)];
+            let alive = (word >> (x & 63)) & 1 != 0;
+            line.push(if alive { '█' } else { '·' });
         }
         writeln!(out, "{line}")?;
     }
