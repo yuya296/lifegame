@@ -97,23 +97,38 @@ fn next_fixed(src: &Grid, dst: &mut Grid, w: usize, h: usize) {
     let d = dst.cells_mut();
 
     // Interior: y in 1..h-1, x in 1..w-1. Every cell has all 8 neighbours
-    // in-bounds, so we can sum them with no branching.
+    // in-bounds, so we can use a rolling column sum:
+    //   col_sums[x] = src[y-1][x] + src[y][x] + src[y+1][x]
+    // Then the 3x3 sum centred on (x, y) is col_sums[x-1] + col_sums[x] +
+    // col_sums[x+1], and we subtract the centre cell itself to get the live
+    // neighbour count. This drops the per-cell load count from 9 to 4 and
+    // the per-cell add count from 8 to 3.
+    let mut col_sums: Vec<u8> = vec![0u8; w];
+    // Initialise from rows 0, 1, 2 (covers y == 1).
+    for x in 0..w {
+        col_sums[x] = s[x] + s[w + x] + s[2 * w + x];
+    }
     for y in 1..h - 1 {
         let row = y * w;
-        let row_u = row - w;
-        let row_d = row + w;
-        // Sub-slices for this row and its two neighbours; keeps indexing
-        // explicit so the optimiser sees them as plain pointer arithmetic.
         for x in 1..w - 1 {
-            let n = s[row_u + x - 1] as u32
-                + s[row_u + x] as u32
-                + s[row_u + x + 1] as u32
-                + s[row + x - 1] as u32
-                + s[row + x + 1] as u32
-                + s[row_d + x - 1] as u32
-                + s[row_d + x] as u32
-                + s[row_d + x + 1] as u32;
-            d[row + x] = b3s23(s[row + x] != 0, n);
+            // 3x3 sum of `col_sums[x-1..=x+1]`, then drop the centre cell
+            // to leave just the eight neighbours.
+            let total = col_sums[x - 1] as u32
+                + col_sums[x] as u32
+                + col_sums[x + 1] as u32;
+            let centre = s[row + x] as u32;
+            let n = total - centre;
+            d[row + x] = b3s23(centre != 0, n);
+        }
+        // Roll col_sums forward to cover (y, y+1, y+2) for the next iter.
+        // For the last interior row we don't need this, but the bounds
+        // check makes the conditional cheap.
+        if y + 1 < h - 1 {
+            let prev_row_base = (y - 1) * w;
+            let next_row_base = (y + 2) * w;
+            for x in 0..w {
+                col_sums[x] = col_sums[x] + s[next_row_base + x] - s[prev_row_base + x];
+            }
         }
     }
 
@@ -185,21 +200,28 @@ fn next_toroidal(src: &Grid, dst: &mut Grid, w: usize, h: usize) {
     let s = src.cells();
     let d = dst.cells_mut();
 
-    // Interior: y in 1..h-1, x in 1..w-1. No wrap occurs in this rectangle.
+    // Interior: y in 1..h-1, x in 1..w-1. No wrap occurs in this rectangle,
+    // so we apply the same rolling column-sum trick as `next_fixed`.
+    let mut col_sums: Vec<u8> = vec![0u8; w];
+    for x in 0..w {
+        col_sums[x] = s[x] + s[w + x] + s[2 * w + x];
+    }
     for y in 1..h - 1 {
         let row = y * w;
-        let row_u = row - w;
-        let row_d = row + w;
         for x in 1..w - 1 {
-            let n = s[row_u + x - 1] as u32
-                + s[row_u + x] as u32
-                + s[row_u + x + 1] as u32
-                + s[row + x - 1] as u32
-                + s[row + x + 1] as u32
-                + s[row_d + x - 1] as u32
-                + s[row_d + x] as u32
-                + s[row_d + x + 1] as u32;
-            d[row + x] = b3s23(s[row + x] != 0, n);
+            let total = col_sums[x - 1] as u32
+                + col_sums[x] as u32
+                + col_sums[x + 1] as u32;
+            let centre = s[row + x] as u32;
+            let n = total - centre;
+            d[row + x] = b3s23(centre != 0, n);
+        }
+        if y + 1 < h - 1 {
+            let prev_row_base = (y - 1) * w;
+            let next_row_base = (y + 2) * w;
+            for x in 0..w {
+                col_sums[x] = col_sums[x] + s[next_row_base + x] - s[prev_row_base + x];
+            }
         }
     }
 
