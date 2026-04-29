@@ -72,6 +72,14 @@ impl Simulation {
         self.front.bits()
     }
 
+    pub fn stride_words(&self) -> usize {
+        self.front.stride_words()
+    }
+
+    pub fn stride_bytes(&self) -> usize {
+        self.front.stride_bytes()
+    }
+
     pub fn count_alive(&self) -> u32 {
         self.front.count_alive()
     }

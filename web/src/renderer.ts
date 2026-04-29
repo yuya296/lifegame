@@ -50,7 +50,18 @@ export class Renderer {
     return { x, y };
   }
 
-  draw(cells: Uint8Array, gridW: number, gridH: number, preview?: PreviewState): void {
+  /**
+   * `cells` is the bit-packed view returned by `Sim.cellsView()`. Layout:
+   * 1 bit per cell, LSB = leftmost cell of each byte, `strideBytes` bytes
+   * per row.
+   */
+  draw(
+    cells: Uint8Array,
+    gridW: number,
+    gridH: number,
+    strideBytes: number,
+    preview?: PreviewState,
+  ): void {
     const { ctx, cellSize, offsetX, offsetY, options } = this;
     const cssW = this.canvas.clientWidth;
     const cssH = this.canvas.clientHeight;
@@ -60,9 +71,10 @@ export class Renderer {
 
     ctx.fillStyle = options.aliveColor;
     for (let y = 0; y < gridH; y++) {
-      const row = y * gridW;
+      const rowBase = y * strideBytes;
       for (let x = 0; x < gridW; x++) {
-        if (cells[row + x]) {
+        const byte = cells[rowBase + (x >> 3)];
+        if (byte & (1 << (x & 7))) {
           ctx.fillRect(offsetX + x * cellSize, offsetY + y * cellSize, cellSize, cellSize);
         }
       }

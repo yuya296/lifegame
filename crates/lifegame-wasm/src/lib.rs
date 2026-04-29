@@ -94,22 +94,41 @@ impl WasmSimulation {
             .map_err(|e| JsError::new(&e.to_string()))
     }
 
-    /// Pointer (linear memory offset) to the cells buffer. JS callers should construct
-    /// a fresh view via `new Uint8Array(memory.buffer, ptr, len)`.
+    /// Pointer (linear memory offset) to the bit-packed cells buffer. JS
+    /// callers should construct a fresh view via
+    /// `new Uint8Array(memory.buffer, cellsPtr(), cellsLen())`.
     ///
-    /// IMPORTANT: any mutating call (`step`, `stepBack`, `randomize`, `resize`,
-    /// `clear`, `placePattern`, `setCell`, `toggleCell`) may reallocate the
-    /// underlying `Vec<u8>` and detach previously created `Uint8Array` views.
-    /// Always re-fetch `cellsPtr`/`cellsLen` and rebuild the view after any
-    /// mutation. Practically: call `cellsView()` from a fresh view per frame.
+    /// Layout: cells are stored 1 bit each, with 8 cells per byte (LSB =
+    /// leftmost cell of the byte). Each row occupies `strideBytes()` bytes
+    /// — always a multiple of 8 — so the byte index for cell `(x, y)` is
+    /// `y * strideBytes() + (x >> 3)` and the bit within that byte is
+    /// `x & 7`. The high bits of the trailing byte/word in each row are
+    /// invariant zero, so iterating `0..width` per row never reads stale
+    /// data even when `width` is not a multiple of 8.
+    ///
+    /// IMPORTANT: any mutating call (`step`, `stepBack`, `randomize`,
+    /// `resize`, `clear`, `placePattern`, `setCell`, `toggleCell`) may
+    /// reallocate the underlying buffer and detach previously created
+    /// `Uint8Array` views. Always re-fetch `cellsPtr` / `cellsLen` and
+    /// rebuild the view after any mutation. Practically: rebuild the view
+    /// once per frame.
     #[wasm_bindgen(js_name = cellsPtr)]
     pub fn cells_ptr(&self) -> *const u8 {
         self.inner.cells().as_ptr()
     }
 
+    /// Length in *bytes* of the bit-packed cells buffer.
+    /// Equals `strideBytes() * height`.
     #[wasm_bindgen(js_name = cellsLen)]
     pub fn cells_len(&self) -> usize {
         self.inner.cells().len()
+    }
+
+    /// Bytes per row in the bit-packed cells buffer. Always a multiple of
+    /// 8 (the underlying storage is `u64` words).
+    #[wasm_bindgen(js_name = strideBytes)]
+    pub fn stride_bytes(&self) -> usize {
+        self.inner.stride_bytes()
     }
 
     #[wasm_bindgen(js_name = placePattern)]

@@ -17,13 +17,23 @@ export class Sim {
     return new Sim(new WasmSimulation(width, height, toroidal));
   }
 
-  /** 毎フレーム再取得すること（resize 等で memory が detach されうるため） */
+  /**
+   * 毎フレーム再取得すること（resize 等で memory が detach されうるため）。
+   *
+   * 返ってくる Uint8Array は **bit-packed** layout:
+   *   - 1 bit = 1 cell (LSB が左端のセル)
+   *   - 1 row = `strideBytes()` バイト（常に 8 の倍数）
+   *   - cell (x, y) の生死: `(view[y * strideBytes + (x >> 3)] >> (x & 7)) & 1`
+   */
   cellsView(): Uint8Array {
     const ptr = this.inner.cellsPtr();
     const len = this.inner.cellsLen();
     // memory.buffer は resize で更新される可能性がある
     return new Uint8Array(memory!.buffer, ptr, len);
   }
+
+  /** 1行あたりのバイト数（bit-packed layout）。常に 8 の倍数。 */
+  strideBytes(): number { return this.inner.strideBytes(); }
 
   width(): number { return this.inner.width(); }
   height(): number { return this.inner.height(); }
